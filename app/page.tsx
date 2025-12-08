@@ -1,6 +1,6 @@
 "use client";
+import React, { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { useEffect, useRef, useState } from "react";
 import {
   Plus,
   Paperclip,
@@ -17,24 +17,133 @@ import {
   Share2,
   Users,
   Pencil,
-  Archive
+  Archive,
+  ArrowDown
 } from "lucide-react";
 
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import dynamic from "next/dynamic";
+
+const SyntaxHighlighter = dynamic<any>(
+  () =>
+    import("react-syntax-highlighter").then((mod) => mod.Prism),
+  { ssr: false }
+);
+
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import "katex/dist/katex.min.css";
 
 type Msg = {
+  id: string;
   role: "user" | "model";
   text?: string;
   image?: string;
   file?: { name: string; type: string };
 };
 
+const ChatBubble = React.memo(
+  function ChatBubble({ msg, copiedIndex, copyToClipboard }: any) {
+    if (msg.role === "user") {
+      return (
+        <div className="ml-auto bg-zinc-800/90 max-w-[88%] rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm">
+          {msg.text}
+        </div>
+      );
+    }
+
+    return (
+      <div className="w-full text-[15px] leading-relaxed text-zinc-200 prose prose-invert">
+        <MarkdownRenderer
+          text={msg.text}
+          copiedIndex={copiedIndex}
+          copyToClipboard={copyToClipboard}
+        />
+      </div>
+    );
+  },
+  (prev, next) => prev.msg.text === next.msg.text
+);
+
+const MarkdownRenderer = React.memo(
+  function MarkdownRenderer({ text, copiedIndex, copyToClipboard }: any) {
+    return (
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[rehypeKatex]}
+        components={{
+          code({ className, children }: any) {
+            const match = /language-(\w+)/.exec(className || "");
+            const codeText = String(children).replace(/\n$/, "");
+            const lang = match?.[1] || "text";
+
+            if (!match) {
+              return (
+                <code className="bg-zinc-800 px-1 py-0.5 rounded text-xs">
+                  {children}
+                </code>
+              );
+            }
+
+            return (
+              <div className="relative my-3 rounded-xl overflow-hidden bg-zinc-900 border border-zinc-800">
+                <div className="flex items-center justify-between px-3 py-1.5 text-xs bg-zinc-800">
+                  <span className="uppercase">{lang}</span>
+                  <button
+                    onClick={() =>
+                      copyToClipboard(codeText, codeText.length)
+                    }
+                  >
+                    📋
+                  </button>
+                </div>
+
+                <SyntaxHighlighter
+                  language={lang}
+                  style={oneDark as any}
+                  PreTag="div"
+                  customStyle={{
+                    background: "transparent",
+                    margin: 0,
+                    padding: "12px",
+                    fontSize: "13px"
+                  }}
+                >
+                  {codeText}
+                </SyntaxHighlighter>
+              </div>
+            );
+          }
+        }}
+      >
+        {text}
+      </ReactMarkdown>
+    );
+  }
+);
+
+function safeUUID() {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return Date.now().toString() + Math.random().toString(36).slice(2);
+}
+
 export default function Home() {
+const scrollTimeout = useRef<NodeJS.Timeout | null>(null);
+
+
+const touchStartX = useRef<number | null>(null);
+const touchEndX = useRef<number | null>(null);
+
+const [streamBuffer, setStreamBuffer] = useState("");
+
+const chatContainerRef = useRef<HTMLDivElement>(null);
+const [autoScroll, setAutoScroll] = useState(true);
+const [lockScroll, setLockScroll] = useState(false);
+const [showScrollBottom, setShowScrollBottom] = useState(false);
+
 const [menuPosition, setMenuPosition] = useState<"top" | "bottom">("bottom");
 
 const [shareChat, setShareChat] = useState<any>(null);
@@ -54,7 +163,8 @@ const messages = activeSession?.messages || [];
   const [input, setInput] = useState("");
   const [image, setImage] = useState<string | null>(null);
   const [file, setFile] = useState<{ base64: string; name: string; type: string } | null>(null);
-  const [openHistory, setOpenHistory] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
   const [isStreaming, setIsStreaming] = useState(false);
   const [activePersona, setActivePersona] = useState<any>(null);
   const [personas, setPersonas] = useState<any[]>([]);
@@ -125,37 +235,74 @@ function createNewChat(personaId?: string) {
 
   setSessions(prev => [newSession, ...prev]);
   setActiveSessionId(newSession.id);
-  setOpenHistory(false);
+  setIsSidebarOpen(false);
+
 }
 
 
+function handleTouchStart(e: React.TouchEvent) {
+  touchStartX.current = e.touches[0].clientX;
+}
+
+function handleTouchMove(e: React.TouchEvent) {
+  touchEndX.current = e.touches[0].clientX;
+}
+
+function handleTouchEnd() {
+  if (touchStartX.current === null || touchEndX.current === null) return;
+
+  const distance = touchEndX.current - touchStartX.current;
+
+  // ✅ Swipe ke kanan (buka sidebar)
+  if (distance > 80) {
+    setIsSidebarOpen(true);
+  }
+
+  // ✅ Swipe ke kiri (tutup sidebar)
+  if (distance < -80) {
+    setIsSidebarOpen(false);
+  }
+
+  touchStartX.current = null;
+  touchEndX.current = null;
+}
 
 
 function streamLikeGPT(fullText: string, callback: (text: string) => void) {
   let index = 0;
   stopStreamRef.current = false;
-  setIsStreaming(true); // ✅ mulai streaming
+  setIsStreaming(true);
+  setStreamBuffer("");
+  setLockScroll(true);
 
   function step() {
     if (stopStreamRef.current) {
-      setIsStreaming(false); // ✅ stop manual
+      setIsStreaming(false);
+      setLockScroll(false);
       return;
     }
 
-    const chunkSize = Math.floor(Math.random() * 4) + 3; // 3–6 char
+    const chunkSize = 18;
     index += chunkSize;
 
-    callback(fullText.slice(0, index));
+    const partial = fullText.slice(0, index);
+    setStreamBuffer(partial);
 
     if (index < fullText.length) {
-      streamTimerRef.current = setTimeout(step, 20);
+      streamTimerRef.current = setTimeout(step, 90); // ✅ SATU TIMER SAJA
     } else {
-      setIsStreaming(false); // ✅ selesai normal
+      setIsStreaming(false);
+      setLockScroll(false);
+      callback(fullText);
+      setStreamBuffer("");
     }
   }
 
   step();
 }
+
+
+
 
 
 function stopStreaming() {
@@ -202,9 +349,13 @@ const [codingMode, setCodingMode] = useState(false);
 const [livePreviewCode, setLivePreviewCode] = useState("");
 const [consoleOutput, setConsoleOutput] = useState<string[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
+const visibleMessages = messages.slice(-80);
+
+
 useEffect(() => {
   document.body.style.overflow = "hidden";
   return () => {
+    
     document.body.style.overflow = "auto";
   };
 }, []);
@@ -223,7 +374,16 @@ useEffect(() => {
 
   try {
     const parsed = JSON.parse(saved);
-    setSessions(parsed);
+   const fixed = parsed.map((s: any) => ({
+  ...s,
+  messages: s.messages.map((m: any) => ({
+    ...m,
+    id: m.id || safeUUID()
+  }))
+}));
+
+setSessions(fixed);
+
 
     if (parsed.length > 0) {
       setActiveSessionId(parsed[0].id); // default session pertama
@@ -272,11 +432,24 @@ function runLiveJS(code: string) {
   setConsoleOutput(output);
 }
 
-  // ✅ SAVE HISTORY
+
+// ✅ SAVE WITH DEBOUNCE
 useEffect(() => {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
-  bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  const t = setTimeout(() => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
+  }, 400);
+
+  return () => clearTimeout(t);
 }, [sessions]);
+
+// ✅ AUTO SCROLL TERPISAH
+useEffect(() => {
+  if (!lockScroll) {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }
+}, [sessions, lockScroll]);
+
+
 
 
   function handleImageUpload(e: any) {
@@ -305,15 +478,23 @@ useEffect(() => {
     };
     reader.readAsDataURL(selected);
   }
+  
 async function sendMessage() {
+  if (!activeSessionId) {
+  alert("Pilih persona atau buat chat baru dulu ya 🙏");
+  return;
+}
+
   if (!input.trim() && !image && !file) return;
 
-  const newMsg: Msg = {
-    role: "user",
-    text: input || undefined,
-    image: image || undefined,
-    file: file || undefined
-  };
+const newMsg: Msg = {
+  id: safeUUID(),
+  role: "user",
+  text: input || undefined,
+  image: image || undefined,
+  file: file || undefined
+};
+
 
   // ✅ Tambah ke session aktif
   setSessions(prev =>
@@ -363,31 +544,42 @@ const updatedMessages =
       session.id === activeSessionId
         ? {
             ...session,
-            messages: [...session.messages, { role: "model", text: "" }]
+            messages: [
+  ...session.messages,
+  {
+    id: safeUUID(),
+    role: "model",
+    text: ""
+  }
+]
+
           }
         : session
     )
   );
 
   // ✅ Streaming
-  streamLikeGPT(data.reply, (liveText) => {
-    setSessions(prev =>
-      prev.map(session => {
-        if (session.id !== activeSessionId) return session;
+streamLikeGPT(data.reply, (finalText) => {
+  setSessions(prev =>
+    prev.map(session => {
+      if (session.id !== activeSessionId) return session;
 
-        const updated = [...session.messages];
-        updated[updated.length - 1] = {
-          role: "model",
-          text: liveText
-        };
+      const updated = [...session.messages];
+updated[updated.length - 1] = {
+  ...updated[updated.length - 1], // ✅ id TETAP ADA
+  role: "model",
+  text: finalText
+};
 
-        return {
-          ...session,
-          messages: updated
-        };
-      })
-    );
-  });
+
+      return {
+        ...session,
+        messages: updated
+      };
+    })
+  );
+});
+
 
   setImage(null);
   setFile(null);
@@ -396,25 +588,183 @@ const updatedMessages =
   return (
     <main className="fixed inset-0 flex flex-col bg-zinc-950 text-white">
 
+{/* ✅ MINI SIDEBAR ala GPT — DESKTOP ONLY */}
+<div className="hidden md:flex fixed left-0 top-0 h-full w-[64px] bg-zinc-900 border-r border-zinc-800 flex-col items-center py-4 gap-6 z-50">
 
-      {/* ✅ DRAWER HISTORY (MOBILE & DESKTOP) */}
-<aside
-  className={`fixed z-50 top-0 left-0 h-screen w-64 
-  bg-zinc-900 border-r border-zinc-800
-  transform transition-transform duration-300
-  flex flex-col
-  ${openHistory ? "translate-x-0" : "-translate-x-full"}`}
+  <button onClick={() => setIsSidebarOpen(true)}>
+    <Menu className="w-5 h-5" />
+  </button>
+
+  <button onClick={() => activePersona && createNewChat(activePersona.id)}>
+    <Plus className="w-5 h-5" />
+  </button>
+
+  <button onClick={() => setCodingMode(true)}>
+    <Laptop className="w-5 h-5" />
+  </button>
+
+  <div className="mt-auto">
+    {activePersona?.image && (
+      <img
+        src={activePersona.image}
+        className="w-8 h-8 rounded-full object-cover border border-zinc-700"
+      />
+    )}
+  </div>
+</div>
+
+{/* ✅ FLOATING HEADER (MOBILE ONLY, CHATGPT STYLE) */}
+{/* ✅ FLOATING HEADER (MOBILE ONLY, CHATGPT STYLE) */}
+<div className="
+  md:hidden
+  fixed top-0 left-0 right-0
+  h-14 flex items-center justify-between px-4 pt-2
+  bg-zinc-950/60 backdrop-blur-md
+  border-b border-zinc-800
+  z-[999]
+">
+  {/* LEFT MENU */}
+  <button onClick={() => setIsSidebarOpen(true)}>
+    <Menu className="w-6 h-6" />
+  </button>
+
+  {/* TITLE */}
+  <h1 className="text-base font-semibold tracking-wide">
+    Gachaverse.id
+  </h1>
+
+  {/* PERSONA AVATAR */}
+  {activePersona?.image ? (
+    <img
+      src={activePersona.image}
+      className="w-9 h-9 rounded-full object-cover ring-2 ring-white/20"
+    />
+  ) : (
+    <div className="w-9 h-9 rounded-full bg-zinc-800" />
+  )}
+</div>
+
+
+
+
+
+{/* ✅ MOBILE SIDEBAR DRAWER */}
+<div
+  className={`
+    md:hidden
+    fixed top-0 left-0 h-full w-[280px]
+    bg-zinc-950 border-r border-zinc-800 z-[998]
+    transition-transform duration-300
+    ${isSidebarOpen ? "translate-x-0" : "-translate-x-full"}
+  `}
 >
-  {/* ✅ HEADER (TIDAK IKUT SCROLL) */}
-  <div className="shrink-0 p-4 flex items-center justify-between border-b border-zinc-800">
-    <h2 className="font-semibold">History</h2>
-    <button onClick={() => setOpenHistory(false)}>✕</button>
+  {/* HEADER */}
+  <div className="flex items-center justify-between px-4 h-14 border-b border-zinc-800">
+    <span className="text-sm font-semibold text-white">History</span>
+    <button onClick={() => setIsSidebarOpen(false)}>
+      <X className="w-5 h-5" />
+    </button>
   </div>
 
-  {/* ✅ AREA YANG SCROLL */}
-  <div className="flex-1 overflow-y-auto px-3 py-4 space-y-4 scrollbar-thin">
+  {/* CONTENT */}
+  <div className="flex-1 overflow-y-auto px-3 py-4 space-y-4">
 
-    {/* ✅ PERSONA */}
+    {/* PERSONA */}
+    <div>
+      <h2 className="text-xs font-semibold text-zinc-400 mb-2">PERSONA</h2>
+      <div className="space-y-2">
+        {personas.map((p) => (
+          <button
+            key={p.id}
+            onClick={() => {
+              setActivePersona(p);
+
+              const existing = sessions.find(
+                (s: any) => s.personaId === p.id
+              );
+
+              if (existing) {
+                setActiveSessionId(existing.id);
+              } else {
+                createNewChat(p.id);
+              }
+
+              setIsSidebarOpen(false);
+            }}
+            className={`flex items-center gap-3 w-full p-2 rounded-lg transition
+              ${activePersona?.id === p.id
+                ? "bg-zinc-800"
+                : "hover:bg-zinc-900"
+              }`}
+          >
+            <img src={p.image} className="w-7 h-7 rounded-full object-cover" />
+            <span className="text-sm text-white">{p.name}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+
+    {/* CHAT LIST */}
+    <div>
+      <h3 className="text-xs text-zinc-400 uppercase mb-2">Obrolan</h3>
+      <div className="space-y-1">
+        {sessions.map((chat) => (
+          <button
+            key={chat.id}
+            onClick={() => {
+              setActiveSessionId(chat.id);
+              setIsSidebarOpen(false);
+            }}
+            className={`w-full text-left px-3 py-2 rounded text-sm truncate
+            ${activeSessionId === chat.id
+              ? "bg-zinc-800 text-white"
+              : "hover:bg-zinc-900 text-zinc-400"
+            }`}
+          >
+            {chat.title}
+          </button>
+        ))}
+      </div>
+    </div>
+
+  </div>
+</div>
+{isSidebarOpen && (
+  <div
+    onClick={() => setIsSidebarOpen(false)}
+    className="md:hidden fixed inset-0 bg-black/50 z-[997]"
+  />
+)}
+
+{/* ✅ FULL SIDEBAR (ONLY DESKTOP) */}
+<div
+  className={`
+    fixed top-0 left-[64px] h-full w-[280px]
+    bg-zinc-950 border-r border-zinc-800 z-50
+    transition-transform duration-300
+
+    hidden md:block
+
+    ${isSidebarOpen ? "translate-x-0" : "-translate-x-full"}
+  `}
+>
+
+  
+  {/* ✅ HEADER */}
+  <div className="flex items-center justify-between px-4 h-14 border-b border-zinc-800">
+    <span className="text-sm font-semibold text-white">History</span>
+    <button
+      onClick={() => setIsSidebarOpen(false)}
+      className="text-zinc-400 hover:text-white"
+    >
+      <X className="w-5 h-5" />
+    </button>
+  </div>
+
+  {/* ✅ CONTENT SCROLL */}
+  <div className="flex-1 overflow-y-auto px-3 py-4 space-y-4">
+
+    {/* ✅ PERSONA LIST */}
     <div>
       <h2 className="text-xs font-semibold text-zinc-400 mb-2">PERSONA</h2>
 
@@ -435,300 +785,107 @@ const updatedMessages =
                 createNewChat(p.id);
               }
 
-              setOpenHistory(false);
+              setIsSidebarOpen(false);
             }}
             className={`flex items-center gap-3 w-full p-2 rounded-lg transition
               ${activePersona?.id === p.id
-                ? "bg-blue-600"
-                : "hover:bg-zinc-800"
+                ? "bg-zinc-800"
+                : "hover:bg-zinc-900"
               }`}
           >
-            <img
-              src={p.image}
-              className="w-8 h-8 rounded-full object-cover"
-            />
-            <span className="text-sm font-medium capitalize">
-              {p.name}
-            </span>
+            <img src={p.image} className="w-7 h-7 rounded-full object-cover" />
+            <span className="text-sm text-white">{p.name}</span>
           </button>
         ))}
       </div>
     </div>
 
-    {/* ✅ TOMBOL */}
-<button
-  onClick={() => {
-    setCodingMode(true);
-    setOpenHistory(false);
-  }}
-  className="flex items-center gap-3 w-full px-4 py-3 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-lg"
->
-  <Laptop className="w-5 h-5" />
-  <span className="font-semibold text-sm">Mode Coding</span>
-</button>
+    {/* ✅ CHAT LIST */}
+    <div>
+      <h3 className="text-xs text-zinc-400 uppercase mb-2">Obrolan</h3>
 
-
-<button
-  onClick={() => activePersona && createNewChat(activePersona.id)}
-  className="flex items-center gap-3 w-full px-4 py-3 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-500 shadow-lg text-white"
->
-  <Plus className="w-5 h-5" />
-  <span className="font-semibold text-sm">Obrolan Baru</span>
-</button>
-
-
-    {/* ✅ HISTORY DIPISAH PER PERSONA */}
-    {personas.map((p) => {
-      const chats = sessions.filter(
-  (s: any) => s.personaId === p.id && !s.archived
-);
-
-
-      if (chats.length === 0) return null;
-
-      return (
-        <div key={p.id}>
-          <h3 className="text-xs text-zinc-400 uppercase mb-2">
-            {p.name}
-          </h3>
-
-          <div className="space-y-1">
-            {chats.map((chat) => (
-  <div key={chat.id} className="relative group">
-
-    {/* ✅ ITEM HISTORY */}
-    <button
-      onClick={() => {
-        setActiveSessionId(chat.id);
-        setOpenHistory(false);
-      }}
-      className={`w-full text-left px-3 py-2 pr-10 rounded text-sm truncate transition
-        ${activeSessionId === chat.id
-          ? "bg-zinc-600 text-white"
-          : "bg-zinc-800 hover:bg-zinc-700 text-zinc-300"
-        }`}
-    >
-      {chat.title || "Obrolan Tanpa Judul"}
-    </button>
-
-    {/* ✅ TOMBOL ⋯ */}
-    <button
-  onClick={(e) => {
-    e.stopPropagation();
-
-    const rect = e.currentTarget.getBoundingClientRect();
-    const spaceBelow = window.innerHeight - rect.bottom;
-
-    if (spaceBelow < 200) {
-      setMenuPosition("top");   // 🔼 buka ke atas
-    } else {
-      setMenuPosition("bottom"); // 🔽 buka ke bawah
-    }
-
-    setOpenMenuId(openMenuId === chat.id ? null : chat.id);
-  }}
-  className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white"
->
-  <MoreVertical className="w-4 h-4" />
-</button>
-
-
-    {/* ✅ DROPDOWN MENU */}
-{openMenuId === chat.id && (
-  <div
-    className={`absolute right-2 z-50 w-48 rounded-xl bg-zinc-900 border border-zinc-700 shadow-xl overflow-hidden
-      ${menuPosition === "top" ? "bottom-12" : "top-12"}
-    `}
-  >
-
-
-    {/* ✅ BAGIKAN */}
-<button
-  onClick={() => {
-    setShareChat(chat);
-    setPublicLink(null);
-    setOpenMenuId(null);
-  }}
-  className="flex items-center gap-3 w-full px-4 py-2 text-sm hover:bg-zinc-800"
->
-  <Share2 className="w-4 h-4" /> Bagikan
-</button>
-
-
-    {/* ✅ GANTI NAMA */}
-    <button
-      onClick={() => {
-        renameChat(chat.id);
-        setOpenMenuId(null);
-      }}
-      className="flex items-center gap-3 w-full px-4 py-2 text-sm hover:bg-zinc-800"
-    >
-      <Pencil className="w-4 h-4" /> Ganti nama
-    </button>
-
-    {/* ✅ ARSIPKAN */}
-    <button
-      onClick={() => {
-        archiveChat(chat.id);
-        setOpenMenuId(null);
-      }}
-      className="flex items-center gap-3 w-full px-4 py-2 text-sm hover:bg-zinc-800"
-    >
-      <Archive className="w-4 h-4" /> Arsipkan
-    </button>
-
-    {/* ✅ HAPUS */}
-    <button
-      onClick={() => {
-        setSessions(prev => prev.filter(s => s.id !== chat.id));
-        setOpenMenuId(null);
-      }}
-      className="flex items-center gap-3 w-full px-4 py-2 text-sm text-red-500 hover:bg-red-500/10"
-    >
-      <Trash2 className="w-4 h-4" /> Hapus
-    </button>
-
+      <div className="space-y-1">
+        {sessions.map((chat) => (
+          <button
+            key={chat.id}
+            onClick={() => {
+              setActiveSessionId(chat.id);
+              setIsSidebarOpen(false);
+            }}
+            className={`w-full text-left px-3 py-2 rounded text-sm truncate
+            ${activeSessionId === chat.id
+              ? "bg-zinc-800 text-white"
+              : "hover:bg-zinc-900 text-zinc-400"
+            }`}
+          >
+            {chat.title}
+          </button>
+        ))}
+      </div>
+    </div>
   </div>
-)}
+</div>
 
-  </div>
-))}
-
-          </div>
-        </div>
-      );
-    })}
-
-    {/* ✅ HAPUS CHAT */}
-<button
-  onClick={() => {
-    setSessions(prev =>
-      prev.map(session =>
-        session.id === activeSessionId
-          ? { ...session, messages: [], title: "Obrolan Baru" }
-          : session
-      )
-    );
-    setOpenHistory(false);
-  }}
-  className="flex items-center gap-3 w-full px-4 py-3 rounded-xl bg-red-600 text-white shadow-lg"
->
-  <Trash2 className="w-5 h-5" />
-  <span className="text-sm font-semibold">Hapus Chat Ini</span>
-</button>
-
-
-  </div>
-</aside>
 
 
       {/* ✅ MAIN AREA */}
-      <section className="flex flex-1 flex-col h-full">
+      <section
+  className="flex flex-1 flex-col h-full items-center ml-0 md:ml-[64px] pt-14"
+  onTouchStart={handleTouchStart}
+  onTouchMove={handleTouchMove}
+  onTouchEnd={handleTouchEnd}
+>
 
-        {/* ✅ HEADER */}
-        <div className="flex items-center justify-between h-12 px-4 border-b border-zinc-800 shrink-0">
-          <button onClick={() => setOpenHistory(true)}>
-  <Menu className="w-6 h-6" />
-</button>
 
-          <h1 className="font-semibold">Gachaverse.id</h1>
-          <div className="w-6" />
-        </div>
+
 
         {/* ✅ CHAT AREA */}
-        <div className="flex-1 overflow-y-auto px-3 py-4 space-y-3">
-          {messages.map((msg: Msg, i: number) => (
-
+        
 <div
-  key={i}
-  className={`rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm ${
-    msg.role === "user"
-      ? "ml-auto bg-blue-600 max-w-[88%]"
-      : "mr-auto bg-zinc-800 max-w-[82%]"
-  }`}
+  ref={chatContainerRef}
+  className="flex-1 overflow-y-auto w-full max-w-3xl px-4 py-6 space-y-6 pb-32"
+
+
+
+
+onScroll={() => {
+  if (scrollTimeout.current) return;
+
+  scrollTimeout.current = setTimeout(() => {
+    const el = chatContainerRef.current;
+    if (!el) return;
+
+    const distanceFromBottom =
+      el.scrollHeight - el.scrollTop - el.clientHeight;
+
+    const isAtBottom = distanceFromBottom < 80;
+
+    setAutoScroll(isAtBottom);
+    setShowScrollBottom(!isAtBottom);
+
+    scrollTimeout.current = null;
+  }, 80);
+}}
+
 >
 
-              {msg.text && (
-<div className="prose prose-invert max-w-none text-sm leading-relaxed">
-<ReactMarkdown
-  remarkPlugins={[remarkGfm, remarkMath]}
-  rehypePlugins={[rehypeKatex]}
-  components={{
-    code({ className, children }: any) {
-      const match = /language-(\w+)/.exec(className || "");
-      const codeText = String(children).replace(/\n$/, "");
-      const lang = match?.[1] || "text";
 
-      return match ? (
-        <div className="relative my-3 rounded-xl overflow-hidden bg-zinc-900 border border-zinc-800">
-
-          {/* ✅ HEADER GPT-STYLE */}
-          <div className="flex items-center justify-between px-3 py-1.5 text-xs bg-zinc-800 text-zinc-200">
-            <span className="uppercase font-medium">{lang}</span>
-
-            <button
-              onClick={() => copyToClipboard(codeText, codeText.length)}
-              className="flex items-center gap-1 text-zinc-300 hover:text-white transition"
-            >
-              📋 {copiedIndex === codeText.length ? "Tersalin" : "Salin kode"}
-            </button>
-          </div>
-
-          {/* ✅ CODE AREA */}
-          <SyntaxHighlighter
-            language={lang}
-            style={oneDark as any}
-            PreTag="div"
-            customStyle={{
-              background: "transparent",
-              margin: 0,
-              padding: "12px",
-              fontSize: "13px"
-            }}
-            className="overflow-x-auto"
-          >
-            {codeText}
-          </SyntaxHighlighter>
-        </div>
-      ) : (
-        <code className="bg-zinc-800 px-1 py-0.5 rounded text-xs">
-          {children}
-        </code>
-      );
-    }
-  }}
->
-  {msg.text}
-</ReactMarkdown>
+{visibleMessages.map((msg: Msg) => (
+  <ChatBubble
+    key={msg.id}
+    msg={msg}
+    copiedIndex={copiedIndex}
+    copyToClipboard={copyToClipboard}
+  />
+))}
 
 
 
-</div>
-
-)}
-
-
-              {msg.image && (
-                <img
-                  src={msg.image}
-                  className="mt-2 rounded-lg max-w-full"
-                />
-              )}
-
-              {msg.file && (
-                <div className="flex items-center gap-3 bg-zinc-900 rounded-full px-4 py-2 pr-3">
-                  <Paperclip className="w-4 h-4" />
-
-                  <span className="text-xs">{msg.file.name}</span>
-                </div>
-              )}
-            </div>
-          ))}
 {/* ✅ MODE BERPIKIR (BELUM ADA STREAM) */}
 {isThinking && !isStreaming && (
   <div className="mr-auto max-w-[70%] rounded-2xl px-4 py-3 text-sm bg-zinc-800 shadow-sm">
     <span className="shimmer-text font-medium">
-      ✨ Yura sedang berpikir...
+      ✨ Mengetik...
     </span>
   </div>
 )}
@@ -750,15 +907,22 @@ const updatedMessages =
 )}
 
 
+{isStreaming && streamBuffer && (
+  <div className="text-[15px] leading-relaxed text-zinc-300 whitespace-pre-wrap">
+    {streamBuffer}
+  </div>
+)}
 
-          <div ref={bottomRef} />
+
+
+<div ref={bottomRef} />
+
         </div>
 
         {/* ✅ INPUT FIXED BOTTOM (SAFE AREA) */}
-        <div
-  className="border-t border-zinc-800 p-3 shrink-0 bg-zinc-950"
-  style={{ paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom))" }}
->
+      <div className="fixed bottom-0 left-0 right-0 z-50 flex justify-center bg-zinc-950/80 backdrop-blur px-3 pb-4 pt-2">
+
+
 
 
           {(image || file) && (
@@ -777,7 +941,8 @@ const updatedMessages =
             </div>
           )}
 
-<div className="bg-zinc-900 rounded-2xl px-4 py-2 pr-3">
+<div className="w-full max-w-3xl bg-zinc-900/90 backdrop-blur border border-zinc-800 rounded-2xl px-4 py-3 shadow-2xl">
+
   <div className="flex items-center gap-3 min-h-[44px]">
 
     {/* ✅ ICON GAMBAR — SEKARANG BENAR-BENAR CENTER */}
@@ -793,38 +958,44 @@ const updatedMessages =
     </label>
 
     {/* ✅ TEXTAREA — BOLEH MEMBESAR, ICON TETAP DI TENGAH */}
-    <textarea
-      value={input}
-      onChange={(e) => {
-        setInput(e.target.value);
-        e.target.style.height = "auto";
-        e.target.style.height = Math.min(e.target.scrollHeight, 140) + "px";
-      }}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" && e.shiftKey) {
-          e.preventDefault();
-          sendMessage();
-        }
-      }}
-      placeholder="Ketik perintah dulu sebelum kirim..."
-      className="
-        flex-1
-        bg-transparent
-        outline-none
-        text-[14px]
-        resize-none
-        leading-[1.5]
-        max-h-[140px]
-        pt-[10px]
-        pb-[6px]
-      "
-      style={{ minHeight: "24px" }}
-    />
+<textarea
+  value={input}
+  onChange={(e) => {
+    setInput(e.target.value);
+    e.currentTarget.style.height = "40px"; // reset dulu
+    e.currentTarget.style.height =
+      Math.min(e.currentTarget.scrollHeight, 120) + "px"; // batas tinggi
+  }}
+  onKeyDown={(e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  }}
+  placeholder="Ketik pesan..."
+  rows={1}
+  className="
+    flex-1
+    bg-transparent
+    outline-none
+    resize-none
+    text-[14px]
+    leading-[1.45]
+    px-1
+    py-2
+    max-h-[120px]
+    overflow-y-auto
+  "
+  style={{ minHeight: "40px" }}
+/>
+
 
     {/* ✅ TOMBOL KIRIM — JUGA CENTER */}
     <button
+
       onClick={sendMessage}
-      className="bg-blue-600 hover:bg-blue-500 transition w-10 h-10 rounded-full flex items-center justify-center shrink-0"
+      className="bg-white-600 hover:bg-white-500
+ transition w-10 h-10 rounded-full flex items-center justify-center shrink-0"
     >
       <Send className="w-5 h-5" />
     </button>
@@ -834,10 +1005,35 @@ const updatedMessages =
 
 
         </div>
+{showScrollBottom && (
+  <button
+    onClick={() => {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+      setShowScrollBottom(false);
+    }}
+    className="
+      fixed
+      bottom-20
+      left-1/2
+      -translate-x-1/2
+      z-50
+      w-8 h-8 rounded-full object-cover ring-2 ring-white/30
+      shadow-lg
+      flex items-center justify-center
+      transition-all duration-300
+    "
+  >
+    <ArrowDown className="w-4 h-4 text-white" />
+  </button>
+)}
+
+
+
       </section>
       {codingMode && (
 
-  <div className="fixed inset-0 z-[999] bg-zinc-950 flex flex-col">
+  <div className="fixed inset-0 z-[999] bg-gradient-to-b from-zinc-950 to-zinc-900
+ flex flex-col">
 
     {/* ✅ HEADER CODING */}
     <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
