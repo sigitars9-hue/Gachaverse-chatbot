@@ -1,3 +1,4 @@
+// /pages/api/chat.ts  atau  /app/api/chat/route.ts (sesuaikan kalau pakai App Router)
 import type { NextApiRequest, NextApiResponse } from "next";
 import mammoth from "mammoth";
 
@@ -18,22 +19,41 @@ export default async function handler(
   }
 
   try {
-    const { 
-  messages, 
-  imageBase64, 
-  fileBase64, 
-  fileType,
-  systemPrompt // ✅ DARI PERSONA TXT
-} = req.body;
+    const {
+      messages,
+      imageBase64,
+      fileBase64,
+      fileType,
+      systemPrompt // ✅ Dikirim dari persona
+    } = req.body;
 
-// ✅ FALLBACK JIKA PERSONA TIDAK TERKIRIM
-const finalSystemPrompt = systemPrompt || `
-Kamu adalah AI default yang ramah, pintar, dan membantu.
+    // ✅ SYSTEM PROMPT FINAL (DIPAKAI BENAR-BENAR)
+    const finalSystemPrompt =
+      (systemPrompt || `
+Kamu adalah asisten AI yang ramah, pintar, dan membantu.
+`) +
+      `
+Aturan penulisan rumus matematika (penting):
+- Gunakan LaTeX standar.
+- Inline math: pakai satu dolar, contoh: $E = mc^2$
+- Block math: pakai dua dolar, contoh:
+  $$
+  \\int_0^1 x^2 dx = \\frac{1}{3}
+  $$
+- JANGAN gunakan \\( ... \\) atau \\[ ... \\], agar bisa dirender dengan baik oleh markdown dan KaTeX.
 `;
 
-
+    // =========================
+    // ✅ BANGUN CONTENTS UNTUK GEMINI
+    // =========================
+    // `messages` dari frontend sudah berbentuk:
+    // { role: "user" | "model", parts: [{ text: "..."}] }
     let contents: any[] = [
-      { role: "user", parts: [{ text: systemPrompt }] },
+      {
+        // Bisa "user" atau "model", tapi di sini aman pakai "user"
+        role: "user",
+        parts: [{ text: finalSystemPrompt }]
+      },
       ...(messages || [])
     ];
 
@@ -56,7 +76,7 @@ Kamu adalah AI default yang ramah, pintar, dan membantu.
     }
 
     // =========================
-    // ✅ FILE PDF (LANGSUNG KE GEMINI TANPA pdf-parse)
+    // ✅ FILE PDF (DIBERIKAN LANGSUNG KE GEMINI)
     // =========================
     if (fileBase64 && fileType?.toLowerCase() === "pdf") {
       contents.push({
@@ -77,7 +97,7 @@ Kamu adalah AI default yang ramah, pintar, dan membantu.
     }
 
     // =========================
-    // ✅ FILE DOCX (TETAP PAKAI MAMMOTH)
+    // ✅ FILE DOCX (DIBACA DULU DENGAN MAMMOTH)
     // =========================
     if (fileBase64 && fileType?.toLowerCase() === "docx") {
       const buffer = Buffer.from(fileBase64, "base64");
@@ -110,6 +130,9 @@ Kamu adalah AI default yang ramah, pintar, dan membantu.
     );
 
     const data = await geminiRes.json();
+
+    // Opsional: debug kalau mau
+    // console.log(JSON.stringify(data, null, 2));
 
     const reply =
       data?.candidates?.[0]?.content?.parts?.[0]?.text ||

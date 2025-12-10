@@ -18,7 +18,8 @@ import {
   Users,
   Pencil,
   Archive,
-  ArrowDown
+  ArrowDown,
+  Square
 } from "lucide-react";
 
 import remarkGfm from "remark-gfm";
@@ -33,7 +34,6 @@ const SyntaxHighlighter = dynamic<any>(
 );
 
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
-import "katex/dist/katex.min.css";
 
 type Msg = {
   id: string;
@@ -42,8 +42,27 @@ type Msg = {
   image?: string;
   file?: { name: string; type: string };
 };
+function normalizeLatex(text: string) {
+  if (!text) return text;
+
+  return text
+    // ✅ Block math: \[ ... \] → dipaksa pakai baris sendiri
+    .replace(/\\\[([\s\S]*?)\\\]/g, (_, expr) => `\n\n$$${expr}$$\n\n`)
+
+    // ✅ Inline math: \( ... \)
+    .replace(/\\\(([\s\S]*?)\\\)/g, (_, expr) => `$${expr}$`)
+
+    // ✅ Cegah dollar nempel huruf (misal: x$y$ jadi x $y$)
+    .replace(/([a-zA-Z0-9])\$/g, "$1 $")
+    .replace(/\$([a-zA-Z0-9])/g, "$ $1")
+
+    // ✅ Rapikan spasi ganda berlebihan
+    .replace(/\n{3,}/g, "\n\n");
+}
+
 
 const ChatBubble = React.memo(
+  
   function ChatBubble({ msg, copiedIndex, copyToClipboard }: any) {
     if (msg.role === "user") {
       return (
@@ -53,15 +72,23 @@ const ChatBubble = React.memo(
       );
     }
 
-    return (
-      <div className="w-full text-[15px] leading-relaxed text-zinc-200 prose prose-invert">
-        <MarkdownRenderer
-          text={msg.text}
-          copiedIndex={copiedIndex}
-          copyToClipboard={copyToClipboard}
-        />
-      </div>
-    );
+return (
+  <div className="w-full text-[15px] leading-relaxed text-zinc-200 prose prose-invert">
+
+    {/* ✅ GARIS PEMISAH JAWABAN */}
+    <div className="my-6 flex justify-center">
+      <div className="w-full max-w-[85%] h-px bg-gradient-to-r from-transparent via-zinc-700/60 to-transparent" />
+    </div>
+
+    <MarkdownRenderer
+      text={normalizeLatex(msg.text)}
+      copiedIndex={copiedIndex}
+      copyToClipboard={copyToClipboard}
+    />
+
+  </div>
+);
+
   },
   (prev, next) => prev.msg.text === next.msg.text
 );
@@ -69,53 +96,98 @@ const ChatBubble = React.memo(
 const MarkdownRenderer = React.memo(
   function MarkdownRenderer({ text, copiedIndex, copyToClipboard }: any) {
     return (
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[rehypeKatex]}
-        components={{
-          code({ className, children }: any) {
-            const match = /language-(\w+)/.exec(className || "");
-            const codeText = String(children).replace(/\n$/, "");
-            const lang = match?.[1] || "text";
+<ReactMarkdown
+  remarkPlugins={[remarkGfm, remarkMath]}
+  rehypePlugins={[rehypeKatex]}
+components={{
+  /* ✅ PARAGRAF BIAR GA DEMPET */
+  p({ children }) {
+    return (
+      <p className="leading-[1.9] my-3 text-zinc-200">
+        {children}
+      </p>
+    );
+  },
 
-            if (!match) {
-              return (
-                <code className="bg-zinc-800 px-1 py-0.5 rounded text-xs">
-                  {children}
-                </code>
-              );
-            }
+  /* ✅ LIST ANGKA (NUMBERING) */
+  ol({ children }) {
+    return (
+      <ol className="list-decimal pl-6 my-4 space-y-2 text-zinc-200">
+        {children}
+      </ol>
+    );
+  },
 
-            return (
-              <div className="relative my-3 rounded-xl overflow-hidden bg-zinc-900 border border-zinc-800">
-                <div className="flex items-center justify-between px-3 py-1.5 text-xs bg-zinc-800">
-                  <span className="uppercase">{lang}</span>
-                  <button
-                    onClick={() =>
-                      copyToClipboard(codeText, codeText.length)
-                    }
-                  >
-                    📋
-                  </button>
-                </div>
+  /* ✅ LIST BULLET */
+  ul({ children }) {
+    return (
+      <ul className="list-disc pl-6 my-4 space-y-2 text-zinc-200">
+        {children}
+      </ul>
+    );
+  },
 
-                <SyntaxHighlighter
-                  language={lang}
-                  style={oneDark as any}
-                  PreTag="div"
-                  customStyle={{
-                    background: "transparent",
-                    margin: 0,
-                    padding: "12px",
-                    fontSize: "13px"
-                  }}
-                >
-                  {codeText}
-                </SyntaxHighlighter>
-              </div>
-            );
-          }
-        }}
+  /* ✅ ITEM LIST */
+  li({ children }) {
+    return (
+      <li className="leading-[1.8]">
+        {children}
+      </li>
+    );
+  },
+
+  /* ✅ GARIS PEMISAH HALUS */
+  hr() {
+    return (
+      <div className="my-8 flex justify-center">
+        <div className="w-full max-w-[85%] h-px bg-gradient-to-r from-transparent via-zinc-700/60 to-transparent" />
+      </div>
+    );
+  },
+
+  /* ✅ INLINE & BLOCK CODE (TIDAK DIUBAH SESUAI PERMINTAANMU) */
+  code({ className, children }: any) {
+    const match = /language-(\w+)/.exec(className || "");
+    const codeText = String(children).replace(/\n$/, "");
+    const lang = match?.[1] || "text";
+
+    if (!match) {
+      return (
+        <code className="bg-zinc-800 px-1 py-0.5 rounded text-xs">
+          {children}
+        </code>
+      );
+    }
+
+    return (
+      <div className="relative my-3 rounded-xl overflow-hidden bg-zinc-900 border border-zinc-800">
+        <div className="flex items-center justify-between px-3 py-1.5 text-xs bg-zinc-800">
+          <span className="uppercase">{lang}</span>
+          <button
+            onClick={() => copyToClipboard(codeText, codeText.length)}
+          >
+            📋
+          </button>
+        </div>
+
+        <SyntaxHighlighter
+          language={lang}
+          style={oneDark as any}
+          PreTag="div"
+          customStyle={{
+            background: "transparent",
+            margin: 0,
+            padding: "12px",
+            fontSize: "13px"
+          }}
+        >
+          {codeText}
+        </SyntaxHighlighter>
+      </div>
+    );
+  }
+}}
+
       >
         {text}
       </ReactMarkdown>
@@ -132,7 +204,9 @@ function safeUUID() {
 
 export default function Home() {
 const scrollTimeout = useRef<NodeJS.Timeout | null>(null);
+const isUserScrollingRef = useRef(false);
 
+const [forceAutoScroll, setForceAutoScroll] = useState(true);
 
 const touchStartX = useRef<number | null>(null);
 const touchEndX = useRef<number | null>(null);
@@ -141,7 +215,7 @@ const [streamBuffer, setStreamBuffer] = useState("");
 
 const chatContainerRef = useRef<HTMLDivElement>(null);
 const [autoScroll, setAutoScroll] = useState(true);
-const [lockScroll, setLockScroll] = useState(false);
+
 const [showScrollBottom, setShowScrollBottom] = useState(false);
 
 const [menuPosition, setMenuPosition] = useState<"top" | "bottom">("bottom");
@@ -196,6 +270,33 @@ function archiveChat(chatId: string) {
         : s
     )
   );
+}
+
+function deleteChat(chatId: string) {
+  setSessions(prev => {
+    const next = prev.filter(s => s.id !== chatId);
+
+    // kalau chat yang aktif dihapus, kosongkan pilihan
+    if (activeSessionId === chatId) {
+      setActiveSessionId(null);
+    }
+
+    return next;
+  });
+}
+
+function deleteAllChatsForPersona(personaId: string) {
+  setSessions(prev => {
+    const next = prev.filter(s => s.personaId !== personaId);
+
+    // kalau chat aktif milik persona ini, kosongkan
+    const active = prev.find(s => s.id === activeSessionId);
+    if (active && active.personaId === personaId) {
+      setActiveSessionId(null);
+    }
+
+    return next;
+  });
 }
 
 
@@ -273,28 +374,27 @@ function streamLikeGPT(fullText: string, callback: (text: string) => void) {
   stopStreamRef.current = false;
   setIsStreaming(true);
   setStreamBuffer("");
-  setLockScroll(true);
 
   function step() {
+    // ✅ JIKA DI-STOP → KUNCI TEKS TERAKHIR JADI FINAL
     if (stopStreamRef.current) {
+      const finalPartial = fullText.slice(0, index);
       setIsStreaming(false);
-      setLockScroll(false);
+      setStreamBuffer("");
+      callback(finalPartial); // ✅ SIMPAN HASIL SAMPAI TITIK STOP
       return;
     }
 
-    const chunkSize = 18;
-    index += chunkSize;
-
+    index += 18;
     const partial = fullText.slice(0, index);
     setStreamBuffer(partial);
 
     if (index < fullText.length) {
-      streamTimerRef.current = setTimeout(step, 90); // ✅ SATU TIMER SAJA
+      streamTimerRef.current = setTimeout(step, 90);
     } else {
       setIsStreaming(false);
-      setLockScroll(false);
-      callback(fullText);
       setStreamBuffer("");
+      callback(fullText); // ✅ SELESAI NORMAL
     }
   }
 
@@ -305,15 +405,14 @@ function streamLikeGPT(fullText: string, callback: (text: string) => void) {
 
 
 
+
+
 function stopStreaming() {
   stopStreamRef.current = true;
-
-  if (streamTimerRef.current) {
-    clearTimeout(streamTimerRef.current);
-  }
-
-  setIsStreaming(false);
 }
+
+
+
 
 
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
@@ -350,7 +449,7 @@ const [livePreviewCode, setLivePreviewCode] = useState("");
 const [consoleOutput, setConsoleOutput] = useState<string[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
 const visibleMessages = messages.slice(-80);
-
+const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
 useEffect(() => {
   document.body.style.overflow = "hidden";
@@ -444,10 +543,18 @@ useEffect(() => {
 
 // ✅ AUTO SCROLL TERPISAH
 useEffect(() => {
-  if (!lockScroll) {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }
-}, [sessions, lockScroll]);
+  if (!forceAutoScroll) return;
+  if (isUserScrollingRef.current) return; // ⛔ JANGAN PAKSA SAAT USER PEGANG
+
+  bottomRef.current?.scrollIntoView({
+    behavior: "auto"   // ⬅️ JANGAN pakai "smooth", ini yang bikin narik balik!
+  });
+
+}, [sessions, streamBuffer, forceAutoScroll]);
+
+
+
+
 
 
 
@@ -512,9 +619,12 @@ const newMsg: Msg = {
     )
   );
 
-  setIsThinking(true);
+  setIsThinking(true); 
   setInput("");
-
+  
+if (textareaRef.current) {
+  textareaRef.current.style.height = "40px";
+}
 const updatedMessages =
   activeSession?.messages
     ? [...activeSession.messages, newMsg]
@@ -537,6 +647,7 @@ const updatedMessages =
 
   const data = await res.json();
   setIsThinking(false);
+  setIsStreaming(true);
 
   // ✅ Tambah bubble kosong AI
   setSessions(prev =>
@@ -583,6 +694,7 @@ updated[updated.length - 1] = {
 
   setImage(null);
   setFile(null);
+  setInput("");
 }
 
   return (
@@ -591,9 +703,10 @@ updated[updated.length - 1] = {
 {/* ✅ MINI SIDEBAR ala GPT — DESKTOP ONLY */}
 <div className="hidden md:flex fixed left-0 top-0 h-full w-[64px] bg-zinc-900 border-r border-zinc-800 flex-col items-center py-4 gap-6 z-50">
 
-  <button onClick={() => setIsSidebarOpen(true)}>
-    <Menu className="w-5 h-5" />
-  </button>
+<button onClick={() => setIsSidebarOpen((prev) => !prev)}>
+  <Menu className="w-6 h-6" />
+</button>
+
 
   <button onClick={() => activePersona && createNewChat(activePersona.id)}>
     <Plus className="w-5 h-5" />
@@ -624,9 +737,10 @@ updated[updated.length - 1] = {
   z-[999]
 ">
   {/* LEFT MENU */}
-  <button onClick={() => setIsSidebarOpen(true)}>
-    <Menu className="w-6 h-6" />
-  </button>
+<button onClick={() => setIsSidebarOpen((prev) => !prev)}>
+  <Menu className="w-5 h-5" />
+</button>
+
 
   {/* TITLE */}
   <h1 className="text-base font-semibold tracking-wide">
@@ -667,7 +781,8 @@ updated[updated.length - 1] = {
   </div>
 
   {/* CONTENT */}
-  <div className="flex-1 overflow-y-auto px-3 py-4 space-y-4">
+  <div className="flex-1 overflow-y-auto px-3 py-4 space-y-4 max-h-[calc(100vh-56px)]">
+
 
     {/* PERSONA */}
     <div>
@@ -705,27 +820,99 @@ updated[updated.length - 1] = {
     </div>
 
     {/* CHAT LIST */}
-    <div>
-      <h3 className="text-xs text-zinc-400 uppercase mb-2">Obrolan</h3>
-      <div className="space-y-1">
-        {sessions.map((chat) => (
-          <button
-            key={chat.id}
-            onClick={() => {
-              setActiveSessionId(chat.id);
-              setIsSidebarOpen(false);
-            }}
-            className={`w-full text-left px-3 py-2 rounded text-sm truncate
-            ${activeSessionId === chat.id
-              ? "bg-zinc-800 text-white"
-              : "hover:bg-zinc-900 text-zinc-400"
-            }`}
-          >
-            {chat.title}
-          </button>
-        ))}
-      </div>
-    </div>
+{/* CHAT LIST (GROUP BY PERSONA) */}
+<div>
+  <h3 className="text-xs text-zinc-400 uppercase mb-2">Obrolan</h3>
+
+  <div className="space-y-4">
+    {personas.map((p) => {
+      const personaChats = sessions.filter(
+        (s: any) => s.personaId === p.id && !s.archived
+      );
+
+      if (personaChats.length === 0) return null;
+
+      return (
+        <div key={p.id}>
+          {/* Header persona + tombol hapus semua */}
+<div className="flex items-center justify-between mb-1">
+
+  {/* NAMA PERSONA */}
+  <span className="text-[11px] font-semibold text-zinc-400">
+    {p.name}
+  </span>
+
+  <div className="flex items-center gap-2">
+
+    {/* ➕ OBROLAN BARU KHUSUS PERSONA */}
+    <button
+      onClick={() => {
+        setActivePersona(p);
+        createNewChat(p.id);
+        setIsSidebarOpen(false);
+      }}
+      className="text-zinc-400 hover:text-white"
+      title="Obrolan baru"
+    >
+      <Plus className="w-3.5 h-3.5" />
+    </button>
+
+    {/* 🗑️ HAPUS SEMUA */}
+    <button
+      onClick={() => {
+        if (confirm(`Hapus semua history ${p.name}?`)) {
+          deleteAllChatsForPersona(p.id);
+        }
+      }}
+      className="text-[11px] text-red-400 hover:text-red-300"
+    >
+      Hapus semua
+    </button>
+
+  </div>
+</div>
+
+
+          {/* List chat-nya */}
+          <div className="space-y-1">
+            {personaChats.map((chat: any) => (
+              <div key={chat.id} className="flex items-center gap-1">
+                <button
+                  onClick={() => {
+                    setActivePersona(p);
+                    setActiveSessionId(chat.id);
+                    setIsSidebarOpen(false);
+                  }}
+                  className={`flex-1 text-left px-3 py-2 rounded text-sm truncate
+                    ${activeSessionId === chat.id
+                      ? "bg-zinc-800 text-white"
+                      : "hover:bg-zinc-900 text-zinc-400"
+                    }`}
+                >
+                  {chat.title}
+                </button>
+
+                {/* Hapus satu history */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (confirm("Hapus history ini?")) {
+                      deleteChat(chat.id);
+                    }
+                  }}
+                  className="p-1 rounded hover:bg-red-900/40 text-zinc-500 hover:text-red-400"
+                >
+                  <Trash2 className="w-3 h-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    })}
+  </div>
+</div>
+
 
   </div>
 </div>
@@ -740,14 +927,14 @@ updated[updated.length - 1] = {
 <div
   className={`
     fixed top-0 left-[64px] h-full w-[280px]
-    bg-zinc-950 border-r border-zinc-800 z-50
+    bg-zinc-950 border-r border-zinc-800
+    z-30
     transition-transform duration-300
-
     hidden md:block
-
     ${isSidebarOpen ? "translate-x-0" : "-translate-x-full"}
   `}
 >
+
 
   
   {/* ✅ HEADER */}
@@ -762,7 +949,8 @@ updated[updated.length - 1] = {
   </div>
 
   {/* ✅ CONTENT SCROLL */}
-  <div className="flex-1 overflow-y-auto px-3 py-4 space-y-4">
+  <div className="flex-1 overflow-y-auto px-3 py-4 space-y-4 max-h-[calc(100vh-56px)]">
+
 
     {/* ✅ PERSONA LIST */}
     <div>
@@ -801,36 +989,90 @@ updated[updated.length - 1] = {
     </div>
 
     {/* ✅ CHAT LIST */}
-    <div>
-      <h3 className="text-xs text-zinc-400 uppercase mb-2">Obrolan</h3>
+{/* ✅ CHAT LIST (GROUP BY PERSONA) */}
+<div>
+  <h3 className="text-xs text-zinc-400 uppercase mb-2">Obrolan</h3>
 
-      <div className="space-y-1">
-        {sessions.map((chat) => (
-          <button
-            key={chat.id}
-            onClick={() => {
-              setActiveSessionId(chat.id);
-              setIsSidebarOpen(false);
-            }}
-            className={`w-full text-left px-3 py-2 rounded text-sm truncate
-            ${activeSessionId === chat.id
-              ? "bg-zinc-800 text-white"
-              : "hover:bg-zinc-900 text-zinc-400"
-            }`}
-          >
-            {chat.title}
-          </button>
-        ))}
-      </div>
-    </div>
+  <div className="space-y-4">
+    {personas.map((p) => {
+      const personaChats = sessions.filter(
+        (s: any) => s.personaId === p.id && !s.archived
+      );
+
+      if (personaChats.length === 0) return null;
+
+      return (
+        <div key={p.id}>
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-[11px] font-semibold text-zinc-400">
+              {p.name}
+            </span>
+
+            <button
+              onClick={() => {
+                if (confirm(`Hapus semua history ${p.name}?`)) {
+                  deleteAllChatsForPersona(p.id);
+                }
+              }}
+              className="text-[11px] text-red-400 hover:text-red-300"
+            >
+              Hapus semua
+            </button>
+          </div>
+
+          <div className="space-y-1">
+            {personaChats.map((chat: any) => (
+              <div key={chat.id} className="flex items-center gap-1">
+                <button
+                  onClick={() => {
+                    setActivePersona(p);
+                    setActiveSessionId(chat.id);
+                    setIsSidebarOpen(false);
+                  }}
+                  className={`flex-1 text-left px-3 py-2 rounded text-sm truncate
+                    ${activeSessionId === chat.id
+                      ? "bg-zinc-800 text-white"
+                      : "hover:bg-zinc-900 text-zinc-400"
+                    }`}
+                >
+                  {chat.title}
+                </button>
+
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (confirm("Hapus history ini?")) {
+                      deleteChat(chat.id);
+                    }
+                  }}
+                  className="p-1 rounded hover:bg-red-900/40 text-zinc-500 hover:text-red-400"
+                >
+                  <Trash2 className="w-3 h-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    })}
+  </div>
+</div>
+
   </div>
 </div>
 
 
 
       {/* ✅ MAIN AREA */}
-      <section
-  className="flex flex-1 flex-col h-full items-center ml-0 md:ml-[64px] pt-14"
+<section
+  className={`
+    flex flex-1 flex-col h-full
+    items-center
+    pt-14
+    md:items-stretch
+    ml-0
+    ${isSidebarOpen ? "md:ml-[344px]" : "md:ml-[64px]"}
+  `}
   onTouchStart={handleTouchStart}
   onTouchMove={handleTouchMove}
   onTouchEnd={handleTouchEnd}
@@ -839,33 +1081,48 @@ updated[updated.length - 1] = {
 
 
 
+
+
         {/* ✅ CHAT AREA */}
         
 <div
   ref={chatContainerRef}
-  className="flex-1 overflow-y-auto w-full max-w-3xl px-4 py-6 space-y-6 pb-32"
-
-
+  className="
+    relative           
+    flex-1 overflow-y-auto
+    w-full
+    px-4 py-6
+    space-y-6
+    pb-[260px]
+    md:max-w-[820px]
+    md:mx-auto
+  "
 
 
 onScroll={() => {
-  if (scrollTimeout.current) return;
+  const el = chatContainerRef.current;
+  if (!el) return;
 
+  const distanceFromBottom =
+    el.scrollHeight - el.scrollTop - el.clientHeight;
+
+  const isAtBottom = distanceFromBottom < 80;
+
+  // ✅ Deteksi kalau user BENAR-BENAR menggeser manual
+  isUserScrollingRef.current = true;
+
+  setShowScrollBottom(!isAtBottom);
+  setForceAutoScroll(isAtBottom);
+
+  // ✅ Reset flag setelah user selesai gesture
+  clearTimeout(scrollTimeout.current as any);
   scrollTimeout.current = setTimeout(() => {
-    const el = chatContainerRef.current;
-    if (!el) return;
-
-    const distanceFromBottom =
-      el.scrollHeight - el.scrollTop - el.clientHeight;
-
-    const isAtBottom = distanceFromBottom < 80;
-
-    setAutoScroll(isAtBottom);
-    setShowScrollBottom(!isAtBottom);
-
-    scrollTimeout.current = null;
-  }, 80);
+    isUserScrollingRef.current = false;
+  }, 120);
 }}
+
+
+
 
 >
 
@@ -885,24 +1142,8 @@ onScroll={() => {
 {isThinking && !isStreaming && (
   <div className="mr-auto max-w-[70%] rounded-2xl px-4 py-3 text-sm bg-zinc-800 shadow-sm">
     <span className="shimmer-text font-medium">
-      ✨ Mengetik...
+      ✨ Berfikir...
     </span>
-  </div>
-)}
-
-{/* ✅ MODE STREAMING (TOMBOL STOP MUNCUL DI SINI) */}
-{isStreaming && (
-  <div className="mr-auto flex items-center gap-3 max-w-[85%] rounded-2xl px-4 py-2 text-sm bg-zinc-800 shadow-sm">
-    <span className="text-zinc-300 italic">
-      Yura sedang mengetik...
-    </span>
-
-    <button
-      onClick={stopStreaming}
-      className="ml-auto text-xs bg-zinc-700 hover:bg-red-600 px-3 py-1 rounded transition"
-    >
-      ⏸ Stop
-    </button>
   </div>
 )}
 
@@ -914,65 +1155,120 @@ onScroll={() => {
 )}
 
 
+{showScrollBottom && (
+  <button
+    onClick={() => {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+      setForceAutoScroll(true);   
+      setShowScrollBottom(false);
+    }}
+    className={`
+      fixed z-[9999]
+      bottom-[96px]        
+      right-4              
+      md:right-[24px]
+      w-10 h-10
+      rounded-full
+      bg-zinc-800 hover:bg-zinc-700
+      ring-2 ring-white/20
+      shadow-xl
+      flex items-center justify-center
+      transition
+    `}
+  >
+    <ArrowDown className="w-5 h-5 text-white" />
+  </button>
+)}
+
 
 <div ref={bottomRef} />
 
         </div>
 
-        {/* ✅ INPUT FIXED BOTTOM (SAFE AREA) */}
-      <div className="fixed bottom-0 left-0 right-0 z-50 flex justify-center bg-zinc-950/80 backdrop-blur px-3 pb-4 pt-2">
+{/* ✅ INPUT BAR + PREVIEW GAMBAR (FINAL FIX TOTAL) */}
+<div
+  className={`
+    fixed bottom-0 z-[999] flex justify-center
+    left-0 right-0
+    bg-zinc-950/80 backdrop-blur
+    px-3 pb-4 pt-2
+    ${isSidebarOpen ? "md:left-[344px]" : "md:left-[64px]"}
+  `}
+>
+  <div className="w-full md:max-w-[820px] flex flex-col gap-2">
+
+    {/* ✅ PREVIEW GAMBAR / FILE */}
+    {(image || file) && (
+      <div className="flex items-center gap-3 bg-zinc-900 border border-zinc-800 px-3 py-2 rounded-2xl">
+        {image && (
+          <img src={image} className="h-12 w-12 rounded object-cover" />
+        )}
+
+        {file && (
+          <div className="text-xs text-zinc-200 truncate max-w-[60%]">
+            📄 {file.name}
+          </div>
+        )}
+
+        <button
+          onClick={() => {
+            setImage(null);
+            setFile(null);
+          }}
+          className="ml-auto text-sm text-red-400 hover:text-red-300"
+        >
+          ✕
+        </button>
+      </div>
+    )}
+
+    {/* ✅ INPUT BAR UTUH */}
+    <div className="bg-zinc-900/90 backdrop-blur border border-zinc-800 rounded-2xl px-4 py-3 shadow-2xl">
+      <div className="flex items-end gap-3">
 
 
+        {/* IMAGE */}
+        <label className="cursor-pointer flex items-center justify-center w-9 h-9 text-zinc-400 hover:text-white transition">
+          <ImageIcon className="w-5 h-5" />
+          <input type="file" accept="image/*" onChange={handleImageUpload} hidden />
+        </label>
 
+        {/* FILE */}
+        <label className="cursor-pointer flex items-center justify-center w-9 h-9 text-zinc-400 hover:text-white transition">
+          <Paperclip className="w-5 h-5" />
+          <input type="file" onChange={handleFileUpload} hidden />
+        </label>
 
-          {(image || file) && (
-            <div className="mb-2 flex items-center gap-3 bg-zinc-900 p-2 rounded">
-              {image && <img src={image} className="h-10 w-10 object-cover rounded" />}
-              {file && <span className="text-xs">📄 {file.name}</span>}
-              <button
-                onClick={() => {
-                  setImage(null);
-                  setFile(null);
-                }}
-                className="ml-auto text-red-400"
-              >
-                ✕
-              </button>
-            </div>
-          )}
-
-<div className="w-full max-w-3xl bg-zinc-900/90 backdrop-blur border border-zinc-800 rounded-2xl px-4 py-3 shadow-2xl">
-
-  <div className="flex items-center gap-3 min-h-[44px]">
-
-    {/* ✅ ICON GAMBAR — SEKARANG BENAR-BENAR CENTER */}
-    <label className="cursor-pointer flex items-center justify-center w-9 h-9 text-zinc-400 hover:text-white transition">
-      <ImageIcon className="w-5 h-5" />
-      <input type="file" accept="image/*" onChange={handleImageUpload} hidden />
-    </label>
-
-    {/* ✅ ICON FILE — SEKARANG BENAR-BENAR CENTER */}
-    <label className="cursor-pointer flex items-center justify-center w-9 h-9 text-zinc-400 hover:text-white transition">
-      <Paperclip className="w-5 h-5" />
-      <input type="file" onChange={handleFileUpload} hidden />
-    </label>
-
-    {/* ✅ TEXTAREA — BOLEH MEMBESAR, ICON TETAP DI TENGAH */}
 <textarea
+  ref={textareaRef}
   value={input}
   onChange={(e) => {
     setInput(e.target.value);
-    e.currentTarget.style.height = "40px"; // reset dulu
-    e.currentTarget.style.height =
-      Math.min(e.currentTarget.scrollHeight, 120) + "px"; // batas tinggi
+
+    const el = e.currentTarget;
+
+    el.style.height = "auto"; // reset dulu
+    const maxHeight = 240;
+
+    if (el.scrollHeight <= maxHeight) {
+      el.style.height = el.scrollHeight + "px";
+      el.style.overflowY = "hidden";   // ✅ belum mentok → NO SCROLL
+    } else {
+      el.style.height = maxHeight + "px";
+      el.style.overflowY = "auto";     // ✅ sudah mentok → BARU SCROLL
+    }
   }}
   onKeyDown={(e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      sendMessage();
+      if (isStreaming) {
+        stopStreaming();
+      } else {
+        sendMessage();
+      }
     }
   }}
-  placeholder="Ketik pesan..."
+  placeholder={image || file ? "Tambahkan caption..." : "Ketik pesan..."}
   rows={1}
   className="
     flex-1
@@ -980,52 +1276,46 @@ onScroll={() => {
     outline-none
     resize-none
     text-[14px]
-    leading-[1.45]
-    px-1
-    py-2
-    max-h-[120px]
-    overflow-y-auto
+    leading-[1.55]
+    px-3 py-2
+    rounded-xl
   "
-  style={{ minHeight: "40px" }}
+  style={{ minHeight: "40px", maxHeight: "240px" }}
 />
 
 
-    {/* ✅ TOMBOL KIRIM — JUGA CENTER */}
-    <button
 
-      onClick={sendMessage}
-      className="bg-white-600 hover:bg-white-500
- transition w-10 h-10 rounded-full flex items-center justify-center shrink-0"
-    >
-      <Send className="w-5 h-5" />
-    </button>
+        {/* ✅ SEND */}
+<button
+  onClick={() => {
+    if (isStreaming) {
+      stopStreaming();   // ✅ JADI STOP
+    } else {
+      sendMessage();     // ✅ JADI SEND
+    }
+  }}
+  className={`
+    transition w-10 h-10 rounded-full 
+    flex items-center justify-center shrink-0
+    ${isStreaming 
+      ? "bg-red-600 hover:bg-red-500"
+      : "bg-white-600 hover:bg-white-500"
+    }
+  `}
+>
+  {isStreaming ? (
+    <Square className="w-5 h-5 text-white" />   
+  ) : (
+    <Send className="w-5 h-5" />                
+  )}
+</button>
+
+
+      </div>
+    </div>
 
   </div>
 </div>
-
-
-        </div>
-{showScrollBottom && (
-  <button
-    onClick={() => {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-      setShowScrollBottom(false);
-    }}
-    className="
-      fixed
-      bottom-20
-      left-1/2
-      -translate-x-1/2
-      z-50
-      w-8 h-8 rounded-full object-cover ring-2 ring-white/30
-      shadow-lg
-      flex items-center justify-center
-      transition-all duration-300
-    "
-  >
-    <ArrowDown className="w-4 h-4 text-white" />
-  </button>
-)}
 
 
 
